@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f1f5ee;
+  --bg-sidebar: #1a1f18;
+  --surface: #ffffff;
+  --ink: #213018;
+  --border: #d6ded2;
+  --accent: #7c4a21;
+  --accent-bright: #96623a;
+  --accent-soft: #e8dcc8;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: #17201c;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #c3ccc1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a9b4a6;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: #a4b69f;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.nav-link:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #d6eed1;
+}
+.nav-link-active {
+  background: rgba(150, 98, 58, 0.25) !important;
+  color: #f0e8dc !important;
+  font-weight: 700;
+}
+
+.font-mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
