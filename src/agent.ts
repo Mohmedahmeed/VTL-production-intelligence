@@ -11,8 +11,153 @@ import {
   totalOrders,
   atRiskOrders,
   todayProduction,
+  buildAgentContext,
 } from './data';
-import type { ChatResultData } from './types';
+import type { AlertItem, ChatResultData } from './types';
+
+const OLLAMA_URL = '/ollama/api/chat';
+const OLLAMA_MODEL = 'llama3.2';
+const MAX_HISTORY = 8;
+const REQUEST_TIMEOUT = 45000;
+
+export type AgentHistoryMessage = { role: 'user' | 'assistant'; content: string };
+
+const isString = (v: unknown): v is string => typeof v === 'string';
+
+const stringArray = (v: unknown): string[] | null =>
+  Array.isArray(v) && v.every(isString) ? (v as string[]) : null;
+
+const stringMatrix = (v: unknown): string[][] | null => {
+  if (!Array.isArray(v)) return null;
+  const rows: string[][] = [];
+  for (const row of v) {
+    const cells = stringArray(row);
+    if (!cells) return null;
+    rows.push(cells);
+  }
+  return rows;
+};
+
+const ALERT_SEVERITIES = ['info', 'warning', 'critical'] as const;
+const ALERT_TYPES = ['delay', 'quality', 'maintenance', 'capacity'] as const;
+
+const SYSTEM_PROMPT = (context: string): string =>
+  `Tu es l'assistant production d'un groupe textile exportateur tunisien.
+Réponds en français, de façon concise et factuelle.
+Tu utilises UNIQUEMENT les données du contexte ci-dessous : n'invente AUCUN chiffre, site, commande ou marque.
+Si l'information demandée n'est pas dans le contexte, dis-le clairement dans "summary".
+Réponds UNIQUEMENT par un objet JSON valide, sans texte autour, selon le schéma :
+{
+  "type": "summary" | "table" | "alerts",
+  "summary": "texte de synthèse en français (toujours obligatoire)",
+  "table": { "headers": ["colonne", "..."], "rows": [["cellule", "...", "..."]] } | null,
+  "alerts": [{ "id": "a1", "title": "...", "description": "...", "severity": "info" | "warning" | "critical", "time": "...", "type": "delay" | "quality" | "maintenance" | "capacity" }] | null
+}
+Règles :
+- "summary" est obligatoire dans tous les cas.
+- "table" : au maximum 6 lignes, chaque cellule est une chaîne de caractères.
+- "alerts" : au maximum 5 alertes, uniquement celles présentes dans le contexte.
+- Pour une question simple, "type": "summary" suffit.
+
+CONTEXTE (données du jour) :
+${context}`;
+
+const callOllama = async (
+  query: string,
+  history: AgentHistoryMessage[],
+  fetchImpl: typeof fetch,
+): Promise<string> => {
+  const messages = [
+    { role: 'system', content: SYSTEM_PROMPT(buildAgentContext()) },
+    ...history.slice(-MAX_HISTORY).map(m => ({ role: m.role, content: m.content })),
+    { role: 'user', content: query },
+  ];
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+  try {
+    const res = await fetchImpl(OLLAMA_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        messages,
+        stream: false,
+        format: 'json',
+        temperature: 0.2,
+        options: { num_predict: 800 },
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`Ollama HTTP ${res.status}`);
+    const data = await res.json();
+    const content = data?.message?.content;
+    if (typeof content !== 'string' || !content.trim()) throw new Error('Réponse Ollama vide');
+    return content;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+export const parseOllamaResponse = (raw: string): ChatResultData | null => {
+  let cleaned = raw.trim();
+  cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start === -1 || end <= start) {
+    cleaned = '';
+  } else {
+    cleaned = cleaned.slice(start, end + 1);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+
+  const o = parsed as Record<string, unknown>;
+  const type = o.type;
+  if (type !== 'summary' && type !== 'table' && type !== 'alerts') return null;
+  if (!isString(o.summary)) return null;
+
+  const result: ChatResultData = { type, summary: o.summary };
+
+  if (type === 'table') {
+    const t = o.table as Record<string, unknown> | undefined;
+    if (typeof t !== 'object' || t === null) return null;
+    const headers = stringArray(t.headers);
+    const rows = stringMatrix(t.rows);
+    if (!headers || !rows) return null;
+    result.table = { headers, rows };
+  }
+
+  if (type === 'alerts') {
+    if (!Array.isArray(o.alerts)) return null;
+    const alerts: AlertItem[] = [];
+    for (const a of o.alerts) {
+      if (typeof a !== 'object' || a === null) return null;
+      const item = a as Record<string, unknown>;
+      if (
+        !isString(item.id) ||
+        !isString(item.title) ||
+        !isString(item.description) ||
+        !isString(item.time) ||
+        !ALERT_SEVERITIES.includes(item.severity as never) ||
+        !ALERT_TYPES.includes(item.type as never)
+      ) {
+        return null;
+      }
+      alerts.push(item as unknown as AlertItem);
+    }
+    result.alerts = alerts;
+  }
+
+  return result;
+};
 
 type ParsedIntent = {
   intent: string;
@@ -69,7 +214,6 @@ const findStage = (q: string): string | undefined => {
 const parseIntent = (q: string): ParsedIntent => {
   const query = normalize(q);
 
-  // Check brand precedence first
   const brand = findBrand(query);
 
   for (const { intent, words } of KEYWORDS) {
@@ -80,7 +224,6 @@ const parseIntent = (q: string): ParsedIntent => {
     }
   }
 
-  // Default to dashboard overview for unknown
   return { intent: 'dashboard_overview' };
 };
 
@@ -223,9 +366,20 @@ const generateResponse = (intent: ParsedIntent): ChatResultData => {
   }
 };
 
-export const agentResponse = (query: string): ChatResultData => {
-  const intent = parseIntent(query);
-  return generateResponse(intent);
+export const agentResponse = async (
+  query: string,
+  history: AgentHistoryMessage[] = [],
+  fetchImpl: typeof fetch = fetch,
+): Promise<ChatResultData> => {
+  try {
+    const raw = await callOllama(query, history, fetchImpl);
+    const parsed = parseOllamaResponse(raw);
+    if (parsed) return parsed;
+    throw new Error('Réponse Ollama non exploitable');
+  } catch {
+    const intent = parseIntent(query);
+    return generateResponse(intent);
+  }
 };
 
 export const SUGGESTED_QUESTIONS: string[] = [

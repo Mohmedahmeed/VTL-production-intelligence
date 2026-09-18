@@ -24,7 +24,7 @@ export default function AssistantChat() {
     }
   }, [messages, loading]);
 
-  const send = (text: string) => {
+  const send = async (text: string) => {
     if (!text.trim() || loading) return;
     const userMsg: ChatMessage = {
       id: `u${Date.now()}`,
@@ -32,12 +32,13 @@ export default function AssistantChat() {
       content: text.trim(),
       timestamp: 'maintenant',
     };
-    setMessages(prev => [...prev, userMsg]);
+    const history = [...messages, userMsg];
+    setMessages(history);
     setInput('');
     setLoading(true);
 
-    setTimeout(() => {
-      const data = agentResponse(userMsg.content);
+    try {
+      const data = await agentResponse(userMsg.content, history);
       const assistantMsg: ChatMessage = {
         id: `a${Date.now()}`,
         role: 'assistant',
@@ -46,8 +47,18 @@ export default function AssistantChat() {
         data,
       };
       setMessages(prev => [...prev, assistantMsg]);
+    } catch (err) {
+      console.error('Erreur agent :', err);
+      const errMsg: ChatMessage = {
+        id: `a${Date.now()}`,
+        role: 'assistant',
+        content: 'Je n’ai pas pu répondre. Vérifie que Ollama est lancé (ollama serve) puis réessaie.',
+        timestamp: 'maintenant',
+      };
+      setMessages(prev => [...prev, errMsg]);
+    } finally {
       setLoading(false);
-    }, 700);
+    }
   };
 
   return (

@@ -472,3 +472,48 @@ export const avgOnTimeRate =
 export const todayDefects = DEFECTS.filter(d => d.date === '2026-09-15')
   .reduce((acc, d) => acc + d.count, 0);
 export const todayProduction = DAILY_PRODUCTION[16].actual; // Sep 17
+
+export const buildAgentContext = (): string => {
+  const lines: string[] = [];
+
+  lines.push(`Production du jour (17/09) : ${formatNumber(todayProduction)} pièces. Sur 14 jours, écart vs plan dans DAILY_PRODUCTION.`);
+  lines.push(`Commandes actives : ${totalOrders} (${formatNumber(totalUnits)} pièces au total), dont ${atRiskOrders} à risque.`);
+  lines.push('');
+
+  lines.push('COMMANDES:');
+  for (const o of ORDERS) {
+    lines.push(
+      `${o.reference} | ${o.brand} | ${o.product} | ${formatNumber(o.quantity)} ${o.unit} | ` +
+      `stade: ${o.stage} | progression: ${o.progressPct}% | livraison: ${o.dueDate} | statut: ${o.status} (on_track=bon, at_risk=risque)`
+    );
+  }
+
+  lines.push('');
+  lines.push('SITES:');
+  for (const s of SITES) {
+    lines.push(
+      `${s.name} | employés: ${formatNumber(s.employees)} | machines: ${formatNumber(s.machines)} | ` +
+      `utilisation: ${s.utilization}% | défauts: ${s.defectRate}% | statut: ${s.status}`
+    );
+  }
+
+  lines.push('');
+  lines.push('DÉFAUTS (3 derniers jours):');
+  for (const d of DEFECTS) {
+    lines.push(`${d.date} | ${d.type} | ${formatNumber(d.count)} pièces | ${d.severity} | ${d.stage} | ${d.siteId}`);
+  }
+
+  lines.push('');
+  lines.push('ALERTES ACTIVES:');
+  for (const a of ALERTS) {
+    lines.push(`[${a.severity}] ${a.title} — ${a.description} (${a.time})`);
+  }
+
+  lines.push('');
+  lines.push('MARQUES (taux de livraison à temps):');
+  for (const b of BRANDS) {
+    lines.push(`${b.brand}: ${b.onTime}% (${b.orders} commandes, ${formatNumber(b.units)} pièces)`);
+  }
+
+  return lines.join('\n');
+};
